@@ -5,14 +5,14 @@ export async function apiFetch(path, options = {}) {
     method: options.method || "GET",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: options.body ? options.body : null,
+    body: options.body || null,
   });
 
   if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(errorText);
+    const text = await res.text();
+    throw new Error(text || "ERROR");
   }
 
   return res.json();

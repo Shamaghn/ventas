@@ -6,6 +6,9 @@ import bcrypt from "bcryptjs";
 import { verifyToken } from "./middleware/auth.js";
 import { JWT_SECRET } from "./config/jwt.js";
 
+/* 🔥 DEBUG */
+console.log("🔥 ESTE server.js SE ESTÁ EJECUTANDO 🔥");
+
 /* =====================
    APP
 ===================== */
@@ -24,7 +27,7 @@ const db = mysql.createConnection({
 });
 
 /* =====================
-   FUNCIÓN AUDITORÍA
+   AUDITORÍA GENÉRICA
 ===================== */
 function registrarAuditoria(user, accion, entidad, entidadId) {
   db.query(
@@ -43,7 +46,7 @@ app.get("/", (req, res) => {
 });
 
 /* =====================
-   LOGIN (bcrypt)
+   LOGIN
 ===================== */
 app.post("/login", (req, res) => {
   const { email, password } = req.body;
@@ -52,16 +55,12 @@ app.post("/login", (req, res) => {
     "SELECT * FROM users WHERE email = ?",
     [email],
     async (err, result) => {
-      if (err || result.length === 0) {
+      if (err || result.length === 0)
         return res.status(401).json({ success: false });
-      }
 
       const user = result[0];
       const ok = await bcrypt.compare(password, user.password);
-
-      if (!ok) {
-        return res.status(401).json({ success: false });
-      }
+      if (!ok) return res.status(401).json({ success: false });
 
       const token = jwt.sign(
         {
@@ -80,6 +79,7 @@ app.post("/login", (req, res) => {
           id: user.id,
           email: user.email,
           role: user.role,
+          empresa_id: user.empresa_id,
         },
       });
     }
@@ -87,15 +87,11 @@ app.post("/login", (req, res) => {
 });
 
 /* =====================
-   USUARIOS – CRUD + AUDITORÍA
+   INVENTARIO - PRODUCTOS
 ===================== */
-
-/* LISTAR USUARIOS */
-app.get("/usuarios", verifyToken, (req, res) => {
+app.get("/inventario/productos", verifyToken, (req, res) => {
   db.query(
-    `SELECT id, email, role
-     FROM users
-     WHERE empresa_id = ?`,
+    "SELECT * FROM productos WHERE empresa_id = ?",
     [req.user.empresa_id],
     (err, rows) => {
       if (err) return res.status(500).json(err);
@@ -104,75 +100,79 @@ app.get("/usuarios", verifyToken, (req, res) => {
   );
 });
 
-/* CREAR USUARIO */
-app.post("/usuarios", verifyToken, async (req, res) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ msg: "No autorizado" });
-  }
-
-  const { email, password, role } = req.body;
-  const passwordHash = await bcrypt.hash(password, 10);
-
+/* =====================
+   INVENTARIO - MOVIMIENTOS
+===================== */
+app.get("/inventario/movimientos", verifyToken, (req, res) => {
   db.query(
-    `INSERT INTO users (empresa_id, email, password, role)
-     VALUES (?, ?, ?, ?)`,
-    [req.user.empresa_id, email, passwordHash, role],
-    (err, result) => {
-      if (err) return res.status(500).json(err);
-
-      registrarAuditoria(
-        req.user,
-        "CREAR",
-        "USUARIO",
-        result.insertId
-      );
-
-      res.json({ msg: "Usuario creado" });
+    `
+    SELECT m.id,
+           m.tipo,
+           m.cantidad,
+           m.fecha,
+           p.nombre AS producto
+    FROM movimientos_inventario m
+    JOIN productos p ON p.id = m.producto_id
+    WHERE m.empresa_id = ?
+    ORDER BY m.fecha DESC
+    `,
+    [req.user.empresa_id],
+    (err, rows) => {
+      if (err) {
+        console.error("❌ ERROR MOVIMIENTOS:", err);
+        return res.status(500).json(err);
+      }
+      res.json(rows);
     }
   );
 });
 
-/* EDITAR USUARIO */
-app.put("/usuarios/:id", verifyToken, (req, res) => {
-  const { email, role } = req.body;
-
+/* =====================
+   AUDITORÍA DE INVENTARIO ✅
+===================== */
+app.get("/inventario/auditoria", verifyToken, (req, res) => {
   db.query(
-    `UPDATE users
-     SET email = ?, role = ?
-     WHERE id = ? AND empresa_id = ?`,
-    [email, role, req.params.id, req.user.empresa_id],
-    (err, result) => {
-      if (err) return res.status(500).json(err);
-
-      registrarAuditoria(
-        req.user,
-        "EDITAR",
-        "USUARIO",
-        req.params.id
-      );
-
-      res.json({ msg: "Usuario actualizado" });
-    }
-  );
-});
-
-/* ELIMINAR USUARIO */
-app.delete("/usuarios/:id", verifyToken, (req, res) => {
-  db.query(
-    `DELETE FROM users
-     WHERE id = ? AND empresa_id = ?`,
-    [req.params.id, req.user.empresa_id],
-    (err, result) => {
-      if (err) return res.status(500).json(err);
-
-      registrarAuditoria(
-        req.user,
-        "ELIMINAR",
-        "USUARIO",
-        req.params.id
-      );
-
-      res.json({ msg: "Usuario eliminado" });
+    `
+    SELECT
+      p.id AS producto_id,
+      p.nombre AS producto,
+      p.stock_actual AS stock_sistema,
+      IFNULL(
+        SUM(
+          CASE 
+            WHEN UPPER(TRIM(m.tipo)) = 'ENTRADA' THEN m.cantidad
+            WHEN UPPER(TRIM(m.tipo)) = 'SALIDA'  THEN -m.cantidad
+            ELSE 0
+          END
+        ),
+        0
+      ) AS stock_calculado,
+      p.stock_actual -
+      IFNULL(
+        SUM(
+          CASE 
+            WHEN UPPER(TRIM(m.tipo)) = 'ENTRADA' THEN m.cantidad
+            WHEN UPPER(TRIM(m.tipo)) = 'SALIDA'  THEN -m.cantidad
+            ELSE 0
+          END
+        ),
+        0
+      ) AS diferencia
+    FROM productos p
+    LEFT JOIN movimientos_inventario  m
+      ON m.producto_id = p.id
+      AND m.empresa_id = p.empresa_id
+    WHERE p.empresa_id = ?
+    GROUP BY p.id, p.nombre, p.stock_actual
+    ORDER BY p.nombre
+    `,
+    [req.user.empresa_id],
+    (err, rows) => {
+      if (err) {
+        console.error("❌ ERROR AUDITORÍA:", err);
+        return res.status(500).json(err);
+      }
+      res.json(rows);
     }
   );
 });
@@ -181,5 +181,5 @@ app.delete("/usuarios/:id", verifyToken, (req, res) => {
    SERVER
 ===================== */
 app.listen(3001, () => {
-  console.log("API corriendo en http://localhost:3001");
+  console.log("✅ API corriendo en http://localhost:3001");
 });

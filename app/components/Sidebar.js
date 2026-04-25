@@ -20,89 +20,45 @@ import {
 import { apiFetch } from "@/app/utils/api";
 
 const menuItems = [
-  {
-    label: "Dashboard",
-    href: "/admin",
-    icon: HomeIcon,
-    roles: ["admin", "soporte"],
-  },
-  {
-    label: "Usuarios",
-    href: "/admin/usuarios",          // ✅ NUEVO MÓDULO
-    icon: UsersIcon,
-    roles: ["admin"],                 // ✅ solo admin
-  },
-  {
-    label: "Reportes",
-    href: "/admin/reportes",
-    icon: ChartBarIcon,
-    roles: ["admin", "soporte"],
-  },
-  {
-    label: "Inventario",
-    href: "/admin/inventario",
-    icon: ArchiveBoxIcon,
-    roles: ["admin", "almacen"],
-  },
-  {
-    label: "Movimientos",
-    href: "/admin/inventario/movimientos",
-    icon: ArrowsRightLeftIcon,
-    roles: ["admin", "almacen"],
-  },
-  {
-    label: "Kardex",
-    href: "/admin/inventario/kardex",
-    icon: ClipboardDocumentListIcon,
-    roles: ["admin", "almacen"],
-  },
-  {
-    label: "Auditoría",
-    href: "/admin/inventario/auditoria",
-    icon: ShieldCheckIcon,
-    roles: ["admin"],
-  },
-  {
-    label: "Alertas",
-    href: "/admin/inventario/alertas",
-    icon: ExclamationTriangleIcon,
-    roles: ["admin", "almacen"],
-    badge: true,
-  },
-  {
-    label: "Venta nueva",
-    href: "/admin/ventas/nueva",
-    icon: ShoppingCartIcon,
-    roles: ["admin", "almacen"],
-  },
+  { label: "Dashboard", href: "/admin", icon: HomeIcon, roles: ["admin", "soporte"] },
+  { label: "Usuarios", href: "/admin/usuarios", icon: UsersIcon, roles: ["admin"] },
+  { label: "Auditoría Usuarios", href: "/admin/auditoria/usuarios", icon: ShieldCheckIcon, roles: ["admin"] },
+  { label: "Reportes", href: "/admin/reportes", icon: ChartBarIcon, roles: ["admin", "soporte"] },
+  { label: "Inventario", href: "/admin/inventario", icon: ArchiveBoxIcon, roles: ["admin", "almacen"] },
+  { label: "Movimientos", href: "/admin/inventario/movimientos", icon: ArrowsRightLeftIcon, roles: ["admin", "almacen"] },
+  { label: "Kardex", href: "/admin/inventario/kardex", icon: ClipboardDocumentListIcon, roles: ["admin", "almacen"] },
+  { label: "Auditoría Inventario", href: "/admin/inventario/auditoria", icon: ShieldCheckIcon, roles: ["admin"] },
+  { label: "Alertas", href: "/admin/inventario/alertas", icon: ExclamationTriangleIcon, roles: ["admin", "almacen"], badge: true },
+  { label: "Venta nueva", href: "/admin/ventas/nueva", icon: ShoppingCartIcon, roles: ["admin", "almacen"] },
 ];
 
-export default function Sidebar({
-  open,
-  setOpen,
-  mobileOpen,
-  setMobileOpen,
-}) {
+export default function Sidebar({ open, setOpen, mobileOpen, setMobileOpen }) {
   const pathname = usePathname();
   const [role, setRole] = useState(null);
   const [mounted, setMounted] = useState(false);
   const [alertasCount, setAlertasCount] = useState(0);
 
   useEffect(() => {
-    setRole(localStorage.getItem("role"));
+    try {
+      setRole(localStorage.getItem("role"));
+    } catch {
+      setRole(null);
+    }
     setMounted(true);
 
-    // ✅ contador de alertas (stock bajo)
-    apiFetch("/inventario/productos").then(data => {
-      const criticos = data.filter(p => p.stock_actual <= 5);
-      setAlertasCount(criticos.length);
-    });
+    apiFetch("/health")
+      .then(() => apiFetch("/inventario/productos"))
+      .then((data) => {
+        if (!Array.isArray(data)) return;
+        setAlertasCount(data.filter(p => p.stock_actual <= 5).length);
+      })
+      .catch(() => setAlertasCount(0));
   }, []);
 
   if (!mounted) return null;
 
   const allowedMenu = menuItems.filter(item =>
-    item.roles.includes(role)
+    role ? item.roles.includes(role) : false
   );
 
   const logout = () => {
@@ -126,10 +82,7 @@ export default function Sidebar({
           🚀 SaaS
         </span>
 
-        <button
-          onClick={() => setOpen(!open)}
-          className="hidden lg:block"
-        >
+        <button onClick={() => setOpen(!open)} className="hidden lg:block">
           {open ? (
             <ChevronLeftIcon className="w-5" />
           ) : (
@@ -137,10 +90,7 @@ export default function Sidebar({
           )}
         </button>
 
-        <button
-          onClick={() => setMobileOpen(false)}
-          className="lg:hidden"
-        >
+        <button onClick={() => setMobileOpen(false)} className="lg:hidden">
           ✕
         </button>
       </div>
@@ -148,6 +98,7 @@ export default function Sidebar({
       {/* NAV */}
       <nav className="mt-4 space-y-1 px-2">
         {allowedMenu.map(item => {
+          const Icon = item.icon;
           const isActive = pathname === item.href;
 
           return (
@@ -155,20 +106,14 @@ export default function Sidebar({
               key={item.href}
               href={item.href}
               className={`flex items-center gap-3 px-3 py-2 rounded transition
-                ${isActive
-                  ? "bg-gray-800 text-white"
-                  : "text-gray-300 hover:bg-gray-800"}
+                ${isActive ? "bg-gray-800 text-white" : "text-gray-300 hover:bg-gray-800"}
               `}
             >
-              <item.icon className="w-5 h-5" />
+              <Icon className="w-5 h-5" />
+              {open && <span className="flex-1">{item.label}</span>}
 
-              <span className={`${open ? "block" : "hidden"} flex-1`}>
-                {item.label}
-              </span>
-
-              {/* 🔴 BADGE ALERTAS */}
               {item.badge && alertasCount > 0 && open && (
-                <span className="ml-auto bg-red-600 text-white text-xs px-2 py-0.5 rounded-full">
+                <span className="ml-auto bg-red-600 text-white text-xs px-2 rounded-full">
                   {alertasCount}
                 </span>
               )}
@@ -185,9 +130,7 @@ export default function Sidebar({
                      bg-red-600 py-2 rounded hover:bg-red-700"
         >
           <ArrowLeftOnRectangleIcon className="w-5" />
-          <span className={`${open ? "block" : "hidden"}`}>
-            Cerrar sesión
-          </span>
+          {open && <span>Cerrar sesión</span>}
         </button>
       </div>
     </aside>

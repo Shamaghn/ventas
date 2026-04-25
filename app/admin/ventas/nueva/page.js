@@ -44,27 +44,37 @@ export default function NuevaVenta() {
      CARGAR PRODUCTOS
   ===================== */
   useEffect(() => {
-    const cargarProductos = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        if (!token) throw new Error("No hay sesión activa");
-
-        const data = await apiFetch("/inventario/productos");
-        setProductos(data);
-      } catch (error) {
+  const cargarProductos = async () => {
+    try {
+      const data = await apiFetch("/inventario/productos");
+      setProductos(data);
+    } catch (error) {
+      if (error.message === "UNAUTHORIZED") {
+        // ✅ SOLO AQUÍ se cierra sesión
         Swal.fire({
           icon: "error",
           title: "Sesión inválida",
           text: "Por favor inicia sesión nuevamente",
           confirmButtonColor: "#ef4444",
-        }).then(() => router.push("/"));
-      } finally {
-        setLoadingProductos(false);
+        }).then(() => {
+          localStorage.clear();
+          router.push("/");
+        });
+      } else {
+        // ✅ Error normal: NO sacar del sistema
+        Swal.fire(
+          "Error",
+          "No se pudieron cargar los productos",
+          "error"
+        );
       }
-    };
+    } finally {
+      setLoadingProductos(false);
+    }
+  };
 
-    cargarProductos();
-  }, [router]);
+  cargarProductos();
+}, [router]);
 
   /* =====================
      FUNCIONES POS
@@ -212,8 +222,19 @@ export default function NuevaVenta() {
       const data = await apiFetch("/inventario/productos");
       setProductos(data);
     } catch (err) {
-      Swal.fire("Error", err.message, "error");
-    }
+  if (err.message === "UNAUTHORIZED") {
+    Swal.fire(
+      "Sesión inválida",
+      "Por favor inicia sesión nuevamente",
+      "error"
+    ).then(() => {
+      localStorage.clear();
+      router.push("/");
+    });
+  } else {
+    Swal.fire("Error", err.message, "error");
+  }
+}
   };
 
   /* =====================

@@ -1,4 +1,3 @@
-// backend/middleware/auth.js
 import jwt from "jsonwebtoken";
 import { JWT_SECRET } from "../config/jwt.js";
 
@@ -9,17 +8,13 @@ export function verifyToken(req, res, next) {
     return res.status(401).json({ msg: "Token no proporcionado" });
   }
 
-  const [type, token] = authHeader.split(" ");
-
-  if (type !== "Bearer" || !token) {
-    return res.status(401).json({ msg: "Formato de token inválido" });
-  }
+  const token = authHeader.split(" ")[1];
 
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
     next();
   } catch (err) {
-    console.error("JWT ERROR:", err.message);
-    return res.status(401).json({ msg: "Token inválido o expirado" });
+    return res.status(401).json({ msg: "Token inválido" });
   }
 }

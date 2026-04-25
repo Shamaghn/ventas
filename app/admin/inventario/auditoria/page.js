@@ -19,8 +19,15 @@ export default function AuditoriaInventarioPage() {
       movimientos
         .filter((m) => m.producto_id === p.id)
         .forEach((m) => {
-          if (m.tipo === "entrada") saldoCalculado += m.cantidad;
-          if (m.tipo === "salida") saldoCalculado -= m.cantidad;
+          const tipo = m.tipo?.trim().toUpperCase();
+
+          if (tipo === "ENTRADA") {
+            saldoCalculado += Number(m.cantidad);
+          }
+
+          if (tipo === "SALIDA") {
+            saldoCalculado -= Number(m.cantidad);
+          }
         });
 
       const diferencia = p.stock_actual - saldoCalculado;
@@ -48,6 +55,7 @@ export default function AuditoriaInventarioPage() {
               <th className="p-3 text-center">Estado</th>
             </tr>
           </thead>
+
           <tbody>
             {auditoria.map((p) => (
               <tr
@@ -59,17 +67,23 @@ export default function AuditoriaInventarioPage() {
                 }`}
               >
                 <td className="p-3">{p.nombre}</td>
+
                 <td className="p-3 text-right">
                   {p.stock_actual}
                 </td>
+
                 <td className="p-3 text-right">
                   {p.saldoCalculado}
                 </td>
+
                 <td className="p-3 text-right font-bold">
                   {p.diferencia}
                 </td>
+
                 <td className="p-3 text-center">
-                  {p.diferencia === 0 ? "✔ OK" : "⚠ Inconsistencia"}
+                  {p.diferencia === 0
+                    ? "✔ OK"
+                    : "⚠ Inconsistencia"}
                 </td>
               </tr>
             ))}
