@@ -7,12 +7,12 @@ export async function apiFetch(path, options = {}) {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: options.body || null,
+    body: options.body ? JSON.stringify(options.body) : null,
   });
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || "ERROR");
+    throw new Error(text || "Error");
   }
 
   return res.json();

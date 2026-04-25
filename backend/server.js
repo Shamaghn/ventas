@@ -6,15 +6,14 @@ import bcrypt from "bcryptjs";
 import { verifyToken } from "./middleware/auth.js";
 import { JWT_SECRET } from "./config/jwt.js";
 
-/* 🔥 DEBUG */
-console.log("🔥 ESTE server.js SE ESTÁ EJECUTANDO 🔥");
+console.log("🔥 server.js ejecutándose");
 
 /* =====================
    APP
 ===================== */
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json()); // 👈 CLAVE: parsea JSON UNA sola vez
 
 /* =====================
    DB
@@ -27,25 +26,6 @@ const db = mysql.createConnection({
 });
 
 /* =====================
-   AUDITORÍA GENÉRICA
-===================== */
-function registrarAuditoria(user, accion, entidad, entidadId) {
-  db.query(
-    `INSERT INTO auditoria
-     (empresa_id, usuario_id, accion, entidad, entidad_id)
-     VALUES (?, ?, ?, ?, ?)`,
-    [user.empresa_id, user.id, accion, entidad, entidadId]
-  );
-}
-
-/* =====================
-   TEST
-===================== */
-app.get("/", (req, res) => {
-  res.send("API FUNCIONANDO 🚀");
-});
-
-/* =====================
    LOGIN
 ===================== */
 app.post("/login", (req, res) => {
@@ -54,13 +34,14 @@ app.post("/login", (req, res) => {
   db.query(
     "SELECT * FROM users WHERE email = ?",
     [email],
-    async (err, result) => {
-      if (err || result.length === 0)
-        return res.status(401).json({ success: false });
+    async (err, rows) => {
+      if (err || rows.length === 0) {
+        return res.status(401).json({ msg: "Credenciales inválidas" });
+      }
 
-      const user = result[0];
+      const user = rows[0];
       const ok = await bcrypt.compare(password, user.password);
-      if (!ok) return res.status(401).json({ success: false });
+      if (!ok) return res.status(401).json({ msg: "Credenciales inválidas" });
 
       const token = jwt.sign(
         {
@@ -72,30 +53,7 @@ app.post("/login", (req, res) => {
         { expiresIn: "2h" }
       );
 
-      res.json({
-        success: true,
-        token,
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          empresa_id: user.empresa_id,
-        },
-      });
-    }
-  );
-});
-
-/* =====================
-   INVENTARIO - PRODUCTOS
-===================== */
-app.get("/inventario/productos", verifyToken, (req, res) => {
-  db.query(
-    "SELECT * FROM productos WHERE empresa_id = ?",
-    [req.user.empresa_id],
-    (err, rows) => {
-      if (err) return res.status(500).json(err);
-      res.json(rows);
+      res.json({ token });
     }
   );
 });
@@ -106,80 +64,104 @@ app.get("/inventario/productos", verifyToken, (req, res) => {
 app.get("/inventario/movimientos", verifyToken, (req, res) => {
   db.query(
     `
-    SELECT m.id,
-           m.tipo,
-           m.cantidad,
-           m.fecha,
-           p.nombre AS producto
-    FROM movimientos_inventario m
-    JOIN productos p ON p.id = m.producto_id
-    WHERE m.empresa_id = ?
-    ORDER BY m.fecha DESC
+    SELECT id, producto_id, tipo, cantidad, fecha
+    FROM movimientos_inventario
+    WHERE empresa_id = ?
+    ORDER BY fecha DESC
     `,
     [req.user.empresa_id],
     (err, rows) => {
-      if (err) {
-        console.error("❌ ERROR MOVIMIENTOS:", err);
-        return res.status(500).json(err);
-      }
+      if (err) return res.status(500).json(err);
       res.json(rows);
     }
   );
 });
 
 /* =====================
-   AUDITORÍA DE INVENTARIO ✅
+   ✅ FINALIZAR VENTA (COMPRA)
 ===================== */
-app.get("/inventario/auditoria", verifyToken, (req, res) => {
-  db.query(
-    `
-    SELECT
-      p.id AS producto_id,
-      p.nombre AS producto,
-      p.stock_actual AS stock_sistema,
-      IFNULL(
-        SUM(
-          CASE 
-            WHEN UPPER(TRIM(m.tipo)) = 'ENTRADA' THEN m.cantidad
-            WHEN UPPER(TRIM(m.tipo)) = 'SALIDA'  THEN -m.cantidad
-            ELSE 0
-          END
-        ),
-        0
-      ) AS stock_calculado,
-      p.stock_actual -
-      IFNULL(
-        SUM(
-          CASE 
-            WHEN UPPER(TRIM(m.tipo)) = 'ENTRADA' THEN m.cantidad
-            WHEN UPPER(TRIM(m.tipo)) = 'SALIDA'  THEN -m.cantidad
-            ELSE 0
-          END
-        ),
-        0
-      ) AS diferencia
-    FROM productos p
-    LEFT JOIN movimientos_inventario  m
-      ON m.producto_id = p.id
-      AND m.empresa_id = p.empresa_id
-    WHERE p.empresa_id = ?
-    GROUP BY p.id, p.nombre, p.stock_actual
-    ORDER BY p.nombre
-    `,
-    [req.user.empresa_id],
-    (err, rows) => {
-      if (err) {
-        console.error("❌ ERROR AUDITORÍA:", err);
-        return res.status(500).json(err);
+app.post("/ventas/finalizar", verifyToken, (req, res) => {
+  const { cliente_id, total, items } = req.body;
+
+  // 👇 VALIDACIÓN BÁSICA
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ msg: "Items inválidos" });
+  }
+
+  db.beginTransaction((err) => {
+    if (err) return res.status(500).json(err);
+
+    // 1️⃣ Insertar venta
+    db.query(
+      `
+      INSERT INTO ventas (empresa_id, usuario_id, cliente_id, total)
+      VALUES (?, ?, ?, ?)
+      `,
+      [req.user.empresa_id, req.user.id, cliente_id, total],
+      (err, ventaRes) => {
+        if (err) return db.rollback(() => res.status(500).json(err));
+
+        const ventaId = ventaRes.insertId;
+
+        // 2️⃣ Insertar detalle + movimientos
+        const detalleQueries = items.map((item) => {
+          return new Promise((resolve, reject) => {
+            // detalle_ventas
+            db.query(
+              `
+              INSERT INTO detalle_ventas
+              (venta_id, producto_id, cantidad, precio)
+              VALUES (?, ?, ?, ?)
+              `,
+              [ventaId, item.producto_id, item.cantidad, item.precio],
+              (err) => {
+                if (err) return reject(err);
+
+                // movimiento inventario
+                db.query(
+                  `
+                  INSERT INTO movimientos_inventario
+                  (empresa_id, producto_id, tipo, cantidad)
+                  VALUES (?, ?, 'salida', ?)
+                  `,
+                  [
+                    req.user.empresa_id,
+                    item.producto_id,
+                    item.cantidad,
+                  ],
+                  (err) => {
+                    if (err) return reject(err);
+                    resolve();
+                  }
+                );
+              }
+            );
+          });
+        });
+
+        Promise.all(detalleQueries)
+          .then(() => {
+            db.commit((err) => {
+              if (err)
+                return db.rollback(() => res.status(500).json(err));
+
+              res.json({
+                msg: "✅ Venta finalizada correctamente",
+                venta_id: ventaId,
+              });
+            });
+          })
+          .catch((err) =>
+            db.rollback(() => res.status(500).json(err))
+          );
       }
-      res.json(rows);
-    }
-  );
+    );
+  });
 });
 
 /* =====================
    SERVER
 ===================== */
 app.listen(3001, () => {
-  console.log("✅ API corriendo en http://localhost:3001");
+  console.log("✅ API http://localhost:3001");
 });
